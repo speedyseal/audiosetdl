@@ -1,0 +1,2 @@
+youtube-dl==2017.9.15
+multiprocessing-logging==0.2.4
