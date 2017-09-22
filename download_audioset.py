@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-'''
+"""
 Downloads Google's AudioSet dataset locally
-'''
+"""
 from __future__ import unicode_literals
 import argparse
 import csv
@@ -22,14 +22,14 @@ LOGGER.setLevel(logging.DEBUG)
 
 
 def parse_arguments():
-    '''
+    """
     Parse arguments from the command line
 
 
     Returns:
         args:  Argument dictionary
                (Type: dict[str, str])
-    '''
+    """
     parser = argparse.ArgumentParser(description='Download AudioSet data locally')
 
     parser.add_argument('-f',
