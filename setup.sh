@@ -11,6 +11,10 @@ mkdir -p $BIN_DIR
 wget https://repo.continuum.io/miniconda/Miniconda2-latest-Linux-x86_64.sh -O $BIN_DIR/Miniconda2-latest-Linux-x86_64.sh
 bash $BIN_DIR/Miniconda2-latest-Linux-x86_64.sh -p $CONDA_DIR -b
 
+# Install ffmpeg (with OpenSSL support)
+wget https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-64bit-static.tar.xz
+tar xf ffmpeg-release-64bit-static.tar.xz
+mv ffmpeg-3.3.4-64bit-static $BIN_DIR/ffmpeg
+
 # Install conda dependencies
-$CONDA_BIN_DIR/conda install -c conda-forge ffmpeg -y
 $CONDA_BIN_DIR/pip install --upgrade -r ./requirements.txt
