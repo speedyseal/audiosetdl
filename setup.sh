@@ -8,8 +8,8 @@ CONDA_BIN_DIR="$CONDA_DIR/bin"
 mkdir -p $BIN_DIR
 
 # Install Anaconda
-wget https://repo.continuum.io/miniconda/Miniconda2-latest-Linux-x86_64.sh -O $BIN_DIR/Miniconda2-latest-Linux-x86_64.sh
-bash $BIN_DIR/Miniconda2-latest-Linux-x86_64.sh -p $CONDA_DIR -b
+wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O $BIN_DIR/Miniconda3-latest-Linux-x86_64.sh
+bash $BIN_DIR/Miniconda3-latest-Linux-x86_64.sh -p $CONDA_DIR -b
 
 # Install ffmpeg (with OpenSSL support)
 wget https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-64bit-static.tar.xz
