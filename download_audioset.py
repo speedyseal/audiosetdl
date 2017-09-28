@@ -8,13 +8,13 @@ import csv
 import logging, logging.handlers
 import multiprocessing as mp
 import os
+import subprocess as sp
+import sys
 import traceback as tb
 import urllib2
 import multiprocessing_logging
-import youtube_dl
-from youtube_dl.utils import YoutubeDLError, MaxDownloadsReached, \
-                             DownloadError, PostProcessingError, \
-                             UnavailableVideoError
+import pafy
+from cStringIO import StringIO
 
 
 LOGGER = logging.getLogger('audiosetdl')
@@ -37,7 +37,7 @@ def parse_arguments():
                         dest='ffmpeg_path',
                         action='store',
                         type=str,
-                        default='./bin/miniconda/bin/ffmpeg',
+                        default='./bin/ffmpeg/ffmpeg',
                         help='Path to ffmpeg executable')
 
     parser.add_argument('-e',
@@ -95,10 +95,73 @@ def parse_arguments():
     return vars(parser.parse_args())
 
 
+class SubprocessError(Exception):
+    def __init__(self, cmd, return_code, stdout, stderr, *args):
+        msg = 'Got non-zero exit code ({1}) from command "{0}": {2}'
+        msg = msg.format(cmd[0], return_code, stderr)
+        self.cmd = cmd
+        self.cmd_return_code = return_code
+        self.cmd_stdout = stdout
+        self.cmd_stderr = stderr
+        super(SubprocessError, self).__init__(msg, *args)
+
+
+def run_command(cmd, shell=False, close_fds=False):
+    proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE,
+                    shell=shell, close_fds=close_fds)
+    stdout, stderr = proc.communicate()
+
+    return_code = proc.returncode
+
+    if return_code != 0:
+        raise SubprocessError(cmd, return_code, stdout, stderr)
+
+    return stdout, stderr, return_code
+
+
+def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None, output_args=None, log_level='error'):
+    """
+    Transform an input file using `ffmpeg`
+
+    Args:
+        ffmpeg_path:  Path to ffmpeg executable
+                      (Type: str)
+
+        input_path:   Path/URL to input file
+                      (Type: str)
+
+        output_path:  Path/URL to output file
+                      (Type: str)
+
+        input_args:
+        output_args:
+        log_level:
+
+    Returns:
+
+    """
+    if not input_args:
+        input_args = []
+    if not output_args:
+        output_args = []
+    args = [ffmpeg_path] + input_args + ['-i', input_path] + output_args + [output_path, '-loglevel', log_level]
+
+    try:
+        stdout, stderr, retcode = run_command(args)
+    except SubprocessError as e:
+        if not e.cmd_stderr.endswith('already exists. Exiting.\n'):
+            raise e
+        LOGGER.info('ffmpeg output file "{}" already exists.'.format(output_path))
+
+
+
+
 def download_yt_video(ytid, ts_start, output_dir, ffmpeg_path):
     """
-    Download a Youtube video
+    Download a Youtube video (with the audio and video separated).
 
+    The audio will be saved in <output_dir>/audio and the video will be saved in
+    <output_dir>/video.
 
     The output filename is of the format:
         <YouTube ID>_<start time in ms>_<end time in ms>.<extension>
@@ -117,43 +180,47 @@ def download_yt_video(ytid, ts_start, output_dir, ffmpeg_path):
                       (Type: str)
     """
     # Compute some things from the segment boundaries
-    ts_end = ts_start + 10
+    duration = 10
+    ts_end = ts_start + duration
     tms_start, tms_end = int(ts_start * 1000), int(ts_end * 1000)
 
     # Make the output format and video URL
     # Output format is in the format:
     #   <YouTube ID>_<start time in ms>_<end time in ms>.<extension>
-    filename_fmt = '{}_{}_{}.%(ext)s'.format(ytid, tms_start, tms_end)
-    output_fmt = os.path.join(output_dir, filename_fmt)
-    video_url = 'https://www.youtube.com/watch?v={}'.format(ytid)
+    basename_fmt = '{}_{}_{}'.format(ytid, tms_start, tms_end)
+    video_filepath = os.path.join(output_dir, 'video', basename_fmt + '.mp4')
+    audio_filepath = os.path.join(output_dir, 'audio', basename_fmt + '.flac')
+    video_page_url = 'https://www.youtube.com/watch?v={}'.format(ytid)
 
-    # List of opts: https://github.com/rg3/youtube-dl/blob/master/youtube_dl/YoutubeDL.py#L137
-    ydl_opts = {
-        'external_downloader': 'ffmpeg',
-        'external_downloader_args': ['-ss', str(ts_start), '-t', '10'],
-        'prefer_free_formats': True,
-        'outtmpl': output_fmt,
-        'prefer_ffmpeg': True,
-        'nooverwrites': True, # Only applies to metadata
-        'restrictfilenames': True,
-        #'skip_download': True, # NOTE: FOR DEBUG
-    }
+    # Get the direct URLs to the videos with best audio and with best video (with audio)
 
-    # Download video
-    # NOTE: Automatically handles existing files: https://github.com/rg3/youtube-dl/blob/master/youtube_dl/YoutubeDL.py#L1855
-    with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-        retcode = ydl.download([video_url])
+    video = pafy.new(video_page_url)
+    best_video = video.getbest()
+    best_audio = video.getbestaudio()
+    best_video_url = best_video.url
+    best_audio_url = best_audio.url
 
-    # TODO: Figure out why mkv's and webm files are not 10 seconds
+    # Download the video and audio
+    ffmpeg(ffmpeg_path, best_video_url, video_filepath,
+           input_args=['-n', '-ss', str(ts_start)],
+           output_args=['-t', str(duration),
+                        '-f', 'mp4',
+                        '-framerate', '30',
+                        '-vcodec', 'h264'])
+    ffmpeg(ffmpeg_path, best_audio_url, audio_filepath,
+           input_args=['-n', '-ss', str(ts_start)],
+           output_args=['-t', str(duration),
+                        'ar', '44100',
+                        '-vn',
+                        '-ac', '2',
+                        '-sample_fmt', 's16',
+                        '-acodec', 'flac'])
+    LOGGER.info('Downloaded video {} ({} - {})'.format(ytid, ts_start, ts_end))
 
-    ts_end = ts_start + 10
-    if retcode == 0:
-        LOGGER.info('Downloaded video {} ({} - {})'.format(ytid, ts_start, ts_end))
-    else:
-        LOGGER.info('Did not download video {} ({} - {})'.format(ytid, ts_start, ts_end))
+    return video_filepath, audio_filepath
 
 
-def segment_mp_worker(ytid, ts_start, video_dir, ffmpeg_path):
+def segment_mp_worker(ytid, ts_start, data_dir, ffmpeg_path):
     """
 
         ytid:         Youtube ID string
@@ -162,7 +229,7 @@ def segment_mp_worker(ytid, ts_start, video_dir, ffmpeg_path):
         ts_start:     Segment start time (in seconds)
                       (Type: float)
 
-        video_dir:    Directory where videos will be saved
+        data_dir:    Directory where videos will be saved
                       (Type: str)
 
         ffmpeg_path:  Path to ffmpeg executable
@@ -173,25 +240,11 @@ def segment_mp_worker(ytid, ts_start, video_dir, ffmpeg_path):
 
     # Download the video
     try:
-        download_yt_video(ytid, ts_start, video_dir, ffmpeg_path)
-    except MaxDownloadsReached as e:
-        err_msg = 'Maximum downloads reached: {}'.format(e)
+        download_yt_video(ytid, ts_start, data_dir, ffmpeg_path)
+    except SubprocessError as e:
+        err_msg = 'Error while downloading video {}: {}; {}'.format(ytid, e, tb.format_exc())
         LOGGER.error(err_msg)
-        sys.exit(err_msg.format(e))
-    except UnavailableVideoError as e:
-        err_msg = 'Video {} was unavailable: {}'.format(ytid, e)
-        LOGGER.error(err_msg)
-    except DownloadError as e:
-        err_msg = 'Error downloading video {}: {}'.format(ytid, e)
-        LOGGER.error(err_msg)
-    except PostProcessingError as e:
-        err_msg = 'Error while post-processing video {}: {}'.format(ytid, e)
-        LOGGER.error(err_msg)
-        sys.exit(err_msg)
-    except YoutubeDLError:
-        err_msg = 'YoutubeDL error while processing video {}: {}'.format(ytid, e)
-        LOGGER.error(err_msg)
-        sys.exit(err_msg)
+        raise
     except Exception as e:
         err_msg = 'Error while processing video {}: {}; {}'.format(ytid, e, tb.format_exc())
         LOGGER.error(err_msg)
@@ -215,15 +268,19 @@ def download_subset_files(subset_url, data_dir, ffmpeg_path, num_workers):
         num_workers:  Number of multiprocessing workers used to download videos
                       (Type: int)
     """
-
     # Get filename of the subset file
     subset_filename = subset_url.split('/')[-1].split('?')[0]
     subset_path = os.path.join(data_dir, subset_filename)
 
-    # Derive video directory name
-    video_dir = os.path.join(data_dir, 'data', os.path.splitext(subset_filename)[0])
+    # Derive audio and video directory names for this subset
+    data_dir = os.path.join(data_dir, 'data', os.path.splitext(subset_filename)[0])
+    audio_dir = os.path.join(data_dir, 'audio')
+    video_dir = os.path.join(data_dir, 'video')
+    if not os.path.exists(audio_dir):
+        os.makedirs(audio_dir)
     if not os.path.exists(video_dir):
         os.makedirs(video_dir)
+
 
     # Open subset file as a CSV
     if not os.path.exists(subset_path):
@@ -241,13 +298,14 @@ def download_subset_files(subset_url, data_dir, ffmpeg_path, num_workers):
                 # Skip the 3 line header
                 if row_idx < 3:
                     continue
-                worker_args = [row[0], float(row[1]), video_dir, ffmpeg_path]
+                worker_args = [row[0], float(row[1]), data_dir, ffmpeg_path]
                 pool.apply_async(segment_mp_worker, worker_args)
+                break
 
         except csv.Error as e:
             err_msg = 'Encountered error in {} at line {}: {}'
             LOGGER.error(err_msg)
-            sys.exit(err_msg.format(filename, reader.line_num, e))
+            sys.exit(err_msg.format(subset_filename, row_idx+1, e))
         finally:
             pool.close()
             pool.join()
@@ -269,7 +327,7 @@ def init_file_logger():
     LOGGER.addHandler(handler)
 
 
-def init_stdout_logger(verbose):
+def init_console_logger(verbose):
     """
     Initializes logging to stdout
 
@@ -277,7 +335,7 @@ def init_stdout_logger(verbose):
         verbose:  If true, prints verbose information to stdout
                   (Type: bool)
     """
-    # Log to stdout also
+    # Log to stderr also
     stream_handler = logging.StreamHandler()
     if verbose:
         stream_handler.setLevel(logging.DEBUG)
@@ -322,10 +380,10 @@ def download_audioset(data_dir, ffmpeg_path, eval_segments_url,
                                         to download videos
                                         (Type: int)
     """
-    init_stdout_logger(verbose)
+    init_console_logger(verbose)
     if not disable_logging:
         init_file_logger()
-    #multiprocessing_logging.install_mp_handler()
+    multiprocessing_logging.install_mp_handler()
     LOGGER.debug('Initialized logging.')
 
     download_subset_files(eval_segments_url, data_dir, ffmpeg_path, num_workers)
