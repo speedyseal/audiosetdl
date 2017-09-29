@@ -282,7 +282,10 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
     # Get the direct URLs to the videos with best audio and with best video (with audio)
 
     video = pafy.new(video_page_url)
-    best_video = video.getbest()
+    if video_with_audio:
+        best_video = video.getbest()
+    else:
+        best_video = video.getbestvideo()
     best_audio = video.getbestaudio()
     best_video_url = best_video.url
     best_audio_url = best_audio.url
