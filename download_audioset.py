@@ -100,7 +100,7 @@ def parse_arguments():
                         default='flac',
                         help='Name of video format used by ffmpeg for output video')
 
-    parser.add_argument('-va',
+    parser.add_argument('-vwa',
                         '--video-without-audio',
                         dest='video_with_audio',
                         action='store_false',
@@ -296,10 +296,10 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
                          '-f', video_format,
                          '-framerate', '30',
                          '-vcodec', video_codec]
-
     # Suppress audio stream if we don't want to audio in the video
     if not video_with_audio:
         video_output_args.append('-an')
+
     ffmpeg(ffmpeg_path, best_video_url, video_filepath,
            input_args=video_input_args, output_args=video_output_args)
 
@@ -351,7 +351,7 @@ def segment_mp_worker(ytid, ts_start, ts_end, data_dir, ffmpeg_path, **ffmpeg_cf
 
     # Download the video
     try:
-        download_yt_video(ytid, ts_start, ts_end, data_dir, ffmpeg_path)
+        download_yt_video(ytid, ts_start, ts_end, data_dir, ffmpeg_path, **ffmpeg_cfg)
     except SubprocessError as e:
         err_msg = 'Error while downloading video {}: {}; {}'.format(ytid, e, tb.format_exc())
         LOGGER.error(err_msg)
@@ -429,7 +429,7 @@ def download_subset_files(subset_url, data_dir, ffmpeg_path, num_workers,
                 worker_args = [row[0], float(row[1]), float(row[2]), data_dir, ffmpeg_path]
                 pool.apply_async(partial(segment_mp_worker, **ffmpeg_cfg), worker_args)
                 # Run serially
-                # segment_mp_worker(*worker_args, **ffmpeg_cfg)
+                #segment_mp_worker(*worker_args, **ffmpeg_cfg)
 
                 if max_videos is not None:
                     if row_idx - 2 >= max_videos:
