@@ -19,6 +19,11 @@ import pafy
 LOGGER = logging.getLogger('audiosetdl')
 LOGGER.setLevel(logging.DEBUG)
 
+EVAL_URL = 'http://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/eval_segments.csv'
+BALANCED_TRAIN_URL = 'http://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/balanced_train_segments.csv'
+UNBALANCED_TRAIN_URL = 'http://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/unbalanced_train_segments.csv'
+
+
 
 def parse_arguments():
     """
@@ -44,7 +49,7 @@ def parse_arguments():
                         dest='eval_segments_url',
                         action='store',
                         type=str,
-                        default='http://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/eval_segments.csv',
+                        default=EVAL_URL,
                         help='Path to evaluation segments file')
 
     parser.add_argument('-b',
@@ -52,7 +57,7 @@ def parse_arguments():
                         dest='balanced_train_segments_url',
                         action='store',
                         type=str,
-                        default='http://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/balanced_train_segments.csv',
+                        default=BALANCED_TRAIN_URL,
                         help='Path to balanced train segments file')
 
     parser.add_argument('-u',
@@ -60,7 +65,7 @@ def parse_arguments():
                         dest='unbalanced_train_segments_url',
                         action='store',
                         type=str,
-                        default='http://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/unbalanced_train_segments.csv',
+                        default=UNBALANCED_TRAIN_URL,
                         help='Path to unbalanced train segments file')
 
     parser.add_argument('-ac',
@@ -354,7 +359,8 @@ def segment_mp_worker(ytid, ts_start, ts_end, data_dir, ffmpeg_path, **ffmpeg_cf
         raise
 
 
-def download_subset_files(subset_url, data_dir, ffmpeg_path, num_workers, **ffmpeg_cfg):
+def download_subset_files(subset_url, data_dir, ffmpeg_path, num_workers,
+                          max_videos=None,  **ffmpeg_cfg):
     """
     Download subset segment file and videos
 
@@ -371,10 +377,20 @@ def download_subset_files(subset_url, data_dir, ffmpeg_path, num_workers, **ffmp
         num_workers:   Number of multiprocessing workers used to download videos
                        (Type: int)
 
+        max_videos:    Maximum number of videos to download in this subset. If
+                       None, download all files in this subset.
+                       (Type int or None)
+
         **ffmpeg_cfg:  Configuration for audio and video
                        downloading and decoding done by ffmpeg
                        (Type: dict[str, *])
     """
+    # Validate max_videos
+    if max_videos is not None and (max_videos < 1 or type(max_videos) != int):
+        err_msg = 'max_videos must be a positive integer, or None'
+        LOGGER.error(err_msg)
+        raise ValueError(err_msg)
+
     # Get filename of the subset file
     subset_filename = subset_url.split('/')[-1].split('?')[0]
     subset_name = os.path.splitext(subset_filename)[0]
@@ -393,7 +409,7 @@ def download_subset_files(subset_url, data_dir, ffmpeg_path, num_workers, **ffmp
     if not os.path.exists(subset_path):
         LOGGER.info('Downloading subset file for "{}"'.format(subset_name))
         with open(subset_path, 'w') as f:
-            subset_data = urllib.request.urlopen(subset_url).read()
+            subset_data = urllib.request.urlopen(subset_url).read().decode()
             f.write(subset_data)
 
     LOGGER.info('Starting download jobs for subset "{}"'.format(subset_name))
@@ -412,19 +428,28 @@ def download_subset_files(subset_url, data_dir, ffmpeg_path, num_workers, **ffmp
                 # Run serially
                 # segment_mp_worker(*worker_args, **ffmpeg_cfg)
 
+                if max_videos is not None:
+                    if row_idx - 2 >= max_videos:
+                        info_msg = 'Reached maximum ({}) for subset {}'
+                        LOGGER.info(info_msg.format(max_videos, subset_name))
+                        break
+
         except csv.Error as e:
             err_msg = 'Encountered error in {} at line {}: {}'
             LOGGER.error(err_msg)
             sys.exit(err_msg.format(subset_filename, row_idx+1, e))
         except KeyboardInterrupt:
-            LOGGER.info("Received quit signal. Finishing remaining jobs...")
+            LOGGER.info("Forcing exit.")
+            exit()
         finally:
             try:
                 pool.close()
                 pool.join()
             except KeyboardInterrupt:
                 LOGGER.info("Forcing exit.")
-                pool.terminate()
+                exit()
+
+    LOGGER.info('Finished download jobs for subset "{}"'.format(subset_name))
 
 
 def init_file_logger():
