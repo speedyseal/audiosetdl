@@ -8,13 +8,14 @@ import csv
 import logging
 import logging.handlers
 import multiprocessing as mp
+import multiprocessing_logging
 import os
+import pafy
+import random
 import subprocess as sp
 import sys
 import traceback as tb
 import urllib.request
-import multiprocessing_logging
-import pafy
 
 LOGGER = logging.getLogger('audiosetdl')
 LOGGER.setLevel(logging.DEBUG)
@@ -362,10 +363,10 @@ def segment_mp_worker(ytid, ts_start, ts_end, data_dir, ffmpeg_path, **ffmpeg_cf
         raise
 
 
-def download_subset_files(subset_url, data_dir, ffmpeg_path, num_workers,
-                          max_videos=None,  **ffmpeg_cfg):
+def download_random_subset_files(subset_url, data_dir, ffmpeg_path, num_workers,
+                                 max_videos=None,  **ffmpeg_cfg):
     """
-    Download subset segment file and videos
+    Download a a random subset (of size `max_videos`) of subset segment file and videos
 
     Args:
         subset_url:    URL to subset segments file
@@ -415,6 +416,95 @@ def download_subset_files(subset_url, data_dir, ffmpeg_path, num_workers,
             subset_data = urllib.request.urlopen(subset_url).read().decode()
             f.write(subset_data)
 
+    subset_data = []
+    LOGGER.info('Starting download jobs for random subset (of size {}) of subset "{}"'.format(max_videos, subset_name))
+    with open(subset_path, 'r') as f:
+        subset_data_reader = csv.reader(f)
+        try:
+            for row_idx, row in enumerate(subset_data_reader):
+                # Skip the 3 line header
+                if row_idx < 3:
+                    continue
+
+                subset_data.append(row[:3])
+        except csv.Error as e:
+            err_msg = 'Encountered error in {} at line {}: {}'
+            LOGGER.error(err_msg)
+            sys.exit(err_msg.format(subset_filename, row_idx+1, e))
+
+    # Shuffle data
+    random.shuffle(subset_data)
+
+    # Set up multiprocessing pool
+    pool = mp.Pool(num_workers)
+    try:
+        for idx, row in enumerate(subset_data):
+            worker_args = [row[0], float(row[1]), float(row[2]), data_dir, ffmpeg_path]
+            pool.apply_async(partial(segment_mp_worker, **ffmpeg_cfg), worker_args)
+            # Run serially
+            #segment_mp_worker(*worker_args, **ffmpeg_cfg)
+
+            if max_videos is not None:
+                if idx + 1 >= max_videos:
+                    info_msg = 'Reached maximum ({}) for subset {}'
+                    LOGGER.info(info_msg.format(max_videos, subset_name))
+                    break
+    except KeyboardInterrupt:
+        LOGGER.info("Forcing exit.")
+        exit()
+    finally:
+        try:
+            pool.close()
+            pool.join()
+        except KeyboardInterrupt:
+            LOGGER.info("Forcing exit.")
+            exit()
+
+    LOGGER.info('Finished download jobs for subset "{}"'.format(subset_name))
+
+
+def download_subset_files(subset_url, data_dir, ffmpeg_path, num_workers, **ffmpeg_cfg):
+    """
+    Download subset segment file and videos
+
+    Args:
+        subset_url:    URL to subset segments file
+                       (Type: str)
+
+        data_dir:      Directory where dataset files will be saved
+                       (Type: str)
+
+        ffmpeg_path:   Path to ffmpeg executable
+                       (Type: str)
+
+        num_workers:   Number of multiprocessing workers used to download videos
+                       (Type: int)
+
+        **ffmpeg_cfg:  Configuration for audio and video
+                       downloading and decoding done by ffmpeg
+                       (Type: dict[str, *])
+    """
+    # Get filename of the subset file
+    subset_filename = subset_url.split('/')[-1].split('?')[0]
+    subset_name = os.path.splitext(subset_filename)[0]
+    subset_path = os.path.join(data_dir, subset_filename)
+
+    # Derive audio and video directory names for this subset
+    data_dir = os.path.join(data_dir, 'data', subset_name)
+    audio_dir = os.path.join(data_dir, 'audio')
+    video_dir = os.path.join(data_dir, 'video')
+    if not os.path.exists(audio_dir):
+        os.makedirs(audio_dir)
+    if not os.path.exists(video_dir):
+        os.makedirs(video_dir)
+
+    # Open subset file as a CSV
+    if not os.path.exists(subset_path):
+        LOGGER.info('Downloading subset file for "{}"'.format(subset_name))
+        with open(subset_path, 'w') as f:
+            subset_data = urllib.request.urlopen(subset_url).read().decode()
+            f.write(subset_data)
+
     LOGGER.info('Starting download jobs for subset "{}"'.format(subset_name))
     with open(subset_path, 'r') as f:
         subset_data = csv.reader(f)
@@ -430,12 +520,6 @@ def download_subset_files(subset_url, data_dir, ffmpeg_path, num_workers,
                 pool.apply_async(partial(segment_mp_worker, **ffmpeg_cfg), worker_args)
                 # Run serially
                 #segment_mp_worker(*worker_args, **ffmpeg_cfg)
-
-                if max_videos is not None:
-                    if row_idx - 2 >= max_videos:
-                        info_msg = 'Reached maximum ({}) for subset {}'
-                        LOGGER.info(info_msg.format(max_videos, subset_name))
-                        break
 
         except csv.Error as e:
             err_msg = 'Encountered error in {} at line {}: {}'
