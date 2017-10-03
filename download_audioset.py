@@ -4,6 +4,7 @@ Downloads Google's AudioSet dataset locally
 """
 from functools import partial
 import argparse
+import collections
 import csv
 import logging
 import logging.handlers
@@ -12,6 +13,7 @@ import multiprocessing_logging
 import os
 import pafy
 import random
+import shutil
 import subprocess as sp
 import sys
 import traceback as tb
@@ -82,7 +84,7 @@ def parse_arguments():
                         dest='video_codec',
                         action='store',
                         type=str,
-                        default='flac',
+                        default='h264',
                         help='Name of video codec used by ffmpeg to encode output audio')
 
     parser.add_argument('-af',
@@ -98,16 +100,30 @@ def parse_arguments():
                         dest='video_format',
                         action='store',
                         type=str,
-                        default='flac',
+                        default='mp4',
                         help='Name of video format used by ffmpeg for output video')
 
-    parser.add_argument('-vwa',
-                        '--video-without-audio',
-                        dest='video_with_audio',
-                        action='store_false',
-                        default=True,
-                        help='If True, strip out audio from output video')
-
+    parser.add_argument('-vm',
+                        '--video-mode',
+                        dest='video_mode',
+                        action='store',
+                        type=str,
+                        default='bestvideoaudio',
+                        help="Name of the method in which video is downloaded. " \
+                             "'bestvideo' obtains the best quality video that " \
+                             "does not contain an audio stream. 'bestvideoaudio' " \
+                             "obtains the best quality video that contains an " \
+                             "audio stream. 'bestvideowithaudio' obtains the " \
+                             "best quality video without an audio stream and " \
+                             " merges it with audio stream")
+    parser.add_argument('-nr',
+                        '--num-retries',
+                        dest='num_retries',
+                        action='store',
+                        type=int,
+                        default=10,
+                        help='Number of retries when ffmpeg encounters an HTTP' \
+                             'issue, which could be to unpredictable network behavior')
     parser.add_argument('-n',
                         '--num-workers',
                         dest='num_workers',
@@ -185,7 +201,7 @@ def run_command(cmd, **kwargs):
     return stdout, stderr, return_code
 
 
-def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None, output_args=None, log_level='error'):
+def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None, output_args=None, log_level='error', num_retries=10):
     """
     Transform an input file using `ffmpeg`
 
@@ -193,38 +209,64 @@ def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None, output_args=No
         ffmpeg_path:  Path to ffmpeg executable
                       (Type: str)
 
-        input_path:   Path/URL to input file
-                      (Type: str)
+        input_path:   Path/URL to input file(s)
+                      (Type: str or iterable)
 
         output_path:  Path/URL to output file
                       (Type: str)
 
-        input_args:
-        output_args:
-        log_level:
+        input_args:   Options/flags for input files
+                      (Type: list[str])
 
-    Returns:
+        output_args:  Options/flags for output files
+                      (Type: list[str])
 
+        log_level:    ffmpeg logging level
+                      (Type: str)
+
+        num_retries:  Number of retries if ffmpeg encounters an HTTP issue
+                      (Type: int)
     """
+
+    if type(input_path) == str:
+        inputs = ['-i', input_path]
+    elif isinstance(input_path, collections.Iterable):
+        inputs = []
+        for path in input_path:
+            inputs.append('-i')
+            inputs.append(path)
+    else:
+        error_msg = '"input_path" must be a str or an iterable, but got type {}'
+        raise ValueError(error_msg.format(str(type(input_path))))
+
     if not input_args:
         input_args = []
     if not output_args:
         output_args = []
-    args = [ffmpeg_path] + input_args + ['-i', input_path] + output_args + [output_path, '-loglevel', log_level]
+    args = [ffmpeg_path] + input_args + inputs + output_args + [output_path, '-loglevel', log_level]
 
-    try:
-        run_command(args)
-    except SubprocessError as e:
-        if not e.cmd_stderr.endswith('already exists. Exiting.\n'):
-            raise e
-        LOGGER.info('ffmpeg output file "{}" already exists.'.format(output_path))
-
-
+    for _ in range(num_retries):
+        try:
+            run_command(args)
+            break
+        except SubprocessError as e:
+            stderr = e.cmd_stderr.rstrip()
+            if stderr.endswith('already exists. Exiting.'):
+                LOGGER.info('ffmpeg output file "{}" already exists.'.format(output_path))
+                break
+            elif stderr.endswith('Server returned 404 Not Found'):
+                continue
+            else:
+                raise e
+    else:
+        error_msg = 'Maximum number of retries ({}) reached. Could not obtain inputs at {}. Error: {}'
+        LOGGER.error(error_msg.format(num_retries, input_path, stderr))
 
 
 def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
                       audio_codec='flac', audio_format='flac',
-                      video_codec='h264', video_format='mp4', video_with_audio=True):
+                      video_codec='h264', video_format='mp4',
+                      video_mode='bestvideoaudio', num_retries=10):
     """
     Download a Youtube video (with the audio and video separated).
 
@@ -251,22 +293,34 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
                       (Type: str)
 
     Kwargs:
-        audio_codec:       Name of audio codec used by ffmpeg to encode
-                           output audio
-                           (Type: str)
+        audio_codec:   Name of audio codec used by ffmpeg to encode
+                       output audio
+                       (Type: str)
 
-        audio_format:      Name of audio container format used for output audio
-                           (Type: str)
+        audio_format:  Name of audio container format used for output audio
+                       (Type: str)
 
-        video_codec:       Name of video codec used by ffmpeg to encode
-                           output video
-                           (Type: str)
+        video_codec:   Name of video codec used by ffmpeg to encode
+                       output video
+                       (Type: str)
 
-        video_format:      Name of video container format used for output video
-                           (Type: str)
+        video_format:  Name of video container format used for output video
+                       (Type: str)
 
-        video_with_audio:  If True, write audio stream to output video.
-                           (Type: bool)
+        video_mode:    Name of the method in which video is downloaded.
+                       'bestvideo' obtains the best quality video that does not
+                       contain an audio stream. 'bestvideoaudio' obtains the
+                       best quality video that contains an audio stream.
+                       'bestvideowithaudio' obtains the best quality video
+                       without an audio stream and merges it with audio stream.
+                       (Type: bool)
+
+    Returns:
+        video_filepath:  Filepath to video file
+                         (Type: str)
+
+        audio_filepath:  Filepath to audio file
+                         (Type: str)
     """
     # Compute some things from the segment boundaries
     duration = ts_end - ts_start
@@ -283,27 +337,18 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
     # Get the direct URLs to the videos with best audio and with best video (with audio)
 
     video = pafy.new(video_page_url)
-    if video_with_audio:
+    if video_mode in ('bestvideo', 'bestvideowithaudio'):
+        best_video = video.getbestvideo()
+        # If there isn't a video only option, go with best video with audio
+        if best_video is None:
+            best_video = video.getbest()
+    elif video_mode == 'bestvideoaudio':
         best_video = video.getbest()
     else:
-        best_video = video.getbestvideo()
+        raise ValueError('Invalid video mode: {}'.format(video_mode))
     best_audio = video.getbestaudio()
     best_video_url = best_video.url
     best_audio_url = best_audio.url
-
-    # Download the video
-    video_input_args = ['-n', '-ss', str(ts_start)]
-    video_output_args = ['-t', str(duration),
-                         '-f', video_format,
-                         '-framerate', '30',
-                         '-vcodec', video_codec]
-    # Suppress audio stream if we don't want to audio in the video
-    if not video_with_audio:
-        video_output_args.append('-an')
-
-    ffmpeg(ffmpeg_path, best_video_url, video_filepath,
-           input_args=video_input_args, output_args=video_output_args)
-
 
     # Download the audio
     audio_input_args = ['-n', '-ss', str(ts_start)]
@@ -312,9 +357,67 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
                          '-vn',
                          '-ac', '2',
                          '-sample_fmt', 's16',
+                         '-f', audio_format,
                          '-acodec', audio_codec]
     ffmpeg(ffmpeg_path, best_audio_url, audio_filepath,
-           input_args=audio_input_args, output_args=audio_output_args)
+           input_args=audio_input_args, output_args=audio_output_args,
+           num_retries=num_retries)
+
+    if video_mode != 'bestvideowithaudio':
+        # Download the video
+        video_input_args = ['-n', '-ss', str(ts_start)]
+        video_output_args = ['-t', str(duration),
+                             '-f', video_format,
+                             '-framerate', '30',
+                             '-vcodec', video_codec]
+        # Suppress audio stream if we don't want to audio in the video
+        if video_mode in 'bestvideo':
+            video_output_args.append('-an')
+
+        ffmpeg(ffmpeg_path, best_video_url, video_filepath,
+               input_args=video_input_args, output_args=video_output_args,
+               num_retries=num_retries)
+    else:
+        # Download the best quality video, in lossless encoding
+        if video_codec != 'h264':
+            error_msg = 'Not currently supporting merging of best quality video with video for codec: {}'
+            raise NotImplementedError(error_msg.format(video_codec))
+        video_input_args = ['-n', '-ss', str(ts_start)]
+        video_output_args = ['-t', str(duration),
+                             '-f', video_format,
+                             '-crf', '0',
+                             '-preset', 'medium',
+                             '-framerate', '30',
+                             '-an',
+                             '-vcodec', video_codec]
+
+        ffmpeg(ffmpeg_path, best_video_url, video_filepath,
+               input_args=video_input_args, output_args=video_output_args,
+               num_retries=num_retries)
+
+        # Merge the best lossless video with the lossless audio, and compress
+        merge_video_filepath = os.path.splitext(video_filepath)[0] \
+                               + '_merge.' + video_format
+        video_input_args = ['-n']
+        video_output_args = ['-f', video_format,
+                             '-framerate', '30',
+                             '-vcodec', video_codec,
+                             '-acodec', 'aac',
+                             '-ar', '44100',
+                             '-ac', '2',
+                             '-strict', 'experimental']
+
+        ffmpeg(ffmpeg_path, [video_filepath, audio_filepath], merge_video_filepath,
+               input_args=video_input_args, output_args=video_output_args,
+               num_retries=num_retries)
+
+        # Remove the original video file and replace with the merged version
+        if os.path.exists(merge_video_filepath):
+            os.remove(video_filepath)
+            shutil.move(merge_video_filepath, video_filepath)
+        else:
+            error_msg = 'Cannot find merged video for {} ({} - {}) at {}'
+            LOGGER.error(error_msg.format(ytid, ts_start, ts_end, merge_video_filepath))
 
     LOGGER.info('Downloaded video {} ({} - {})'.format(ytid, ts_start, ts_end))
 
@@ -356,11 +459,9 @@ def segment_mp_worker(ytid, ts_start, ts_end, data_dir, ffmpeg_path, **ffmpeg_cf
     except SubprocessError as e:
         err_msg = 'Error while downloading video {}: {}; {}'.format(ytid, e, tb.format_exc())
         LOGGER.error(err_msg)
-        raise
     except Exception as e:
         err_msg = 'Error while processing video {}: {}; {}'.format(ytid, e, tb.format_exc())
         LOGGER.error(err_msg)
-        raise
 
 
 def download_random_subset_files(subset_url, data_dir, ffmpeg_path, num_workers,
