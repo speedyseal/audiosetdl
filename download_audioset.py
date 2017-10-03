@@ -342,7 +342,7 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
         # If there isn't a video only option, go with best video with audio
         if best_video is None:
             best_video = video.getbest()
-    elif video_mode == 'bestvideoaudio':
+    elif video_mode in ('bestvideoaudio', 'bestvideoaudionoaudio'):
         best_video = video.getbest()
     else:
         raise ValueError('Invalid video mode: {}'.format(video_mode))
@@ -371,7 +371,7 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
                              '-framerate', '30',
                              '-vcodec', video_codec]
         # Suppress audio stream if we don't want to audio in the video
-        if video_mode in 'bestvideo':
+        if video_mode in ('bestvideo', 'bestvideoaudionoaudio'):
             video_output_args.append('-an')
 
         ffmpeg(ffmpeg_path, best_video_url, video_filepath,
