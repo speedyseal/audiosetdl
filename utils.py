@@ -83,6 +83,28 @@ def get_filename(path):
     return os.path.basename(path).split('?')[0]
 
 
+def get_media_filename(ytid, ts_start, ts_end):
+    """
+    Get the filename (without extension) for a media file (audio or video) for a YouTube video segment
+
+    Args:
+        ytid:      YouTube ID of a video
+                   (Type: str)
+
+        ts_start:  Segment start time (in seconds)
+                   (Type: float or int)
+
+        ts_end:    Segment end time (in seconds)
+                   (Type: float or int)
+
+    Returns:
+        media_filename:  Filename (without extension) for segment media file
+                         (Type: str)
+    """
+    tms_start, tms_end = int(ts_start * 1000), int(ts_end * 1000)
+    return '{}_{}_{}'.format(ytid, tms_start, tms_end)
+
+
 def get_subset_name(subset_path):
     """
     Gets the name of a subset of the subset file at the given path.

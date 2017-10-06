@@ -21,7 +21,7 @@ import pafy
 
 from log import init_file_logger, init_console_logger
 from utils import SubprocessError, run_command, is_url, get_filename, \
-    get_subset_name
+    get_subset_name, get_media_filename
 
 LOGGER = logging.getLogger('audiosetdl')
 LOGGER.setLevel(logging.DEBUG)
@@ -289,14 +289,13 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
     """
     # Compute some things from the segment boundaries
     duration = ts_end - ts_start
-    tms_start, tms_end = int(ts_start * 1000), int(ts_end * 1000)
 
     # Make the output format and video URL
     # Output format is in the format:
     #   <YouTube ID>_<start time in ms>_<end time in ms>.<extension>
-    basename_fmt = '{}_{}_{}'.format(ytid, tms_start, tms_end)
-    video_filepath = os.path.join(output_dir, 'video', basename_fmt + '.' + video_format)
-    audio_filepath = os.path.join(output_dir, 'audio', basename_fmt + '.' + audio_format)
+    media_filename = get_media_filename(ytid, ts_start, ts_end)
+    video_filepath = os.path.join(output_dir, 'video', media_filename + '.' + video_format)
+    audio_filepath = os.path.join(output_dir, 'audio', media_filename + '.' + audio_format)
     video_page_url = 'https://www.youtube.com/watch?v={}'.format(ytid)
 
     # Get the direct URLs to the videos with best audio and with best video (with audio)
@@ -523,7 +522,18 @@ def download_subset_videos(subset_path, data_dir, ffmpeg_path, num_workers, **ff
                 # Skip commented lines
                 if row[0][0] == '#':
                     continue
-                worker_args = [row[0], float(row[1]), float(row[2]), data_dir, ffmpeg_path]
+                ytid, ts_start, ts_end = row[0], float(row[1]), float(row[2])
+
+                # Skip files that already have been downloaded
+                media_filename = get_media_filename(ytid, ts_start, ts_end)
+                video_filepath = os.path.join(data_dir, 'video', media_filename + '.' + ffmpeg_cfg.get('video_format', 'mp4'))
+                audio_filepath = os.path.join(data_dir, 'audio', media_filename + '.' + ffmpeg_cfg.get('audio_format', 'flac'))
+                if os.path.exists(video_filepath) and os.path.exists(audio_filepath):
+                    info_msg = 'Already downloaded video {} ({} - {}). Skipping.'
+                    LOGGER.info(info_msg.format(ytid, ts_start, ts_end))
+                    continue
+
+                worker_args = [ytid, ts_start, ts_end, data_dir, ffmpeg_path]
                 pool.apply_async(partial(segment_mp_worker, **ffmpeg_cfg), worker_args)
                 # Run serially
                 #segment_mp_worker(*worker_args, **ffmpeg_cfg)
