@@ -742,5 +742,5 @@ def download_audioset(data_dir, ffmpeg_path, eval_segments_path,
 if __name__ == '__main__':
     # TODO: Handle killing of ffmpeg (https://stackoverflow.com/questions/6488275/terminal-text-becomes-invisible-after-terminating-subprocess)
     #       so we don't have to use this hack
-    atexit.register(lambda: os.system('stty sane'))
+    atexit.register(lambda: os.system('stty sane') if sys.stdin.isatty() else None)
     download_audioset(**parse_arguments())
