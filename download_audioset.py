@@ -18,6 +18,7 @@ from functools import partial
 
 import multiprocessing_logging
 import pafy
+import sox
 
 from log import init_file_logger, init_console_logger
 from utils import SubprocessError, run_command, is_url, get_filename, \
@@ -314,18 +315,28 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
     best_video_url = best_video.url
     best_audio_url = best_audio.url
 
+    audio_info = {
+        'sample_rate': 44100,
+        'channels': 2,
+        'bitrate': 16,
+        'encoding': audio_codec.upper(),
+        'duration': duration
+    }
     # Download the audio
     audio_input_args = ['-n', '-ss', str(ts_start)]
     audio_output_args = ['-t', str(duration),
-                         '-ar', '44100',
+                         '-ar', str(audio_info['sample_rate']),
                          '-vn',
-                         '-ac', '2',
-                         '-sample_fmt', 's16',
+                         '-ac', str(audio_info['channels']),
+                         '-sample_fmt', 's{}'.format(audio_info['bitrate']),
                          '-f', audio_format,
                          '-acodec', audio_codec]
     ffmpeg(ffmpeg_path, best_audio_url, audio_filepath,
            input_args=audio_input_args, output_args=audio_output_args,
            num_retries=num_retries)
+
+    if not sanity_check_audio(audio_filepath, audio_info):
+        LOGGER.error('Audio {} is corrupted.'.format(audio_filepath))
 
     if video_mode != 'bestvideowithaudio':
         # Download the video
@@ -387,6 +398,24 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
 
     return video_filepath, audio_filepath
 
+
+def sanity_check_audio(audio_filepath, audio_info):
+    """Take audio file and sanity check basic info.
+
+        Sample output from sox:
+            {
+                'bitrate': 16,
+                'channels': 2,
+                'duration': 9.999501,
+                'encoding': 'FLAC',
+                'num_samples': 440978,
+                'sample_rate': 44100.0,
+                'silent': False
+            }
+    """
+
+    sox_info = sox.file_info.info(audio_filepath)
+    return all([v == sox_info[k] for k, v in audio_info.items()])
 
 def segment_mp_worker(ytid, ts_start, ts_end, data_dir, ffmpeg_path, **ffmpeg_cfg):
     """
