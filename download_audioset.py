@@ -18,11 +18,12 @@ from functools import partial
 
 import multiprocessing_logging
 import pafy
-import sox
 
+from errors import SubprocessError, FfmpegValidationError
 from log import init_file_logger, init_console_logger
-from utils import SubprocessError, run_command, is_url, get_filename, \
+from utils import run_command, is_url, get_filename, \
     get_subset_name, get_media_filename
+from validation import validate_audio
 
 LOGGER = logging.getLogger('audiosetdl')
 LOGGER.setLevel(logging.DEBUG)
@@ -167,7 +168,9 @@ def parse_arguments():
     return vars(parser.parse_args())
 
 
-def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None, output_args=None, log_level='error', num_retries=10):
+def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None,
+           output_args=None, log_level='error', num_retries=10,
+           validation_callback=None, validation_args=None):
     """
     Transform an input file using `ffmpeg`
 
@@ -214,6 +217,11 @@ def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None, output_args=No
     for _ in range(num_retries):
         try:
             run_command(args)
+
+            # Validate if a callback was passed in
+            if validation_callback is not None:
+                validation_args = validation_args or {}
+                validation_callback(output_path, **validation_args)
             break
         except SubprocessError as e:
             stderr = e.cmd_stderr.rstrip()
@@ -221,9 +229,14 @@ def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None, output_args=No
                 LOGGER.info('ffmpeg output file "{}" already exists.'.format(output_path))
                 break
             elif stderr.endswith('Server returned 404 Not Found'):
+                # Retry if we got a 404, in case it was just a network issue
                 continue
             else:
                 raise e
+        except FfmpegValidationError as e:
+            # Retry if the output did not validate
+            LOGGER.info('ffmpeg output file "{}" did not validate: {}. Retrying...'.format(output_path, e))
+            continue
     else:
         error_msg = 'Maximum number of retries ({}) reached. Could not obtain inputs at {}. Error: {}'
         LOGGER.error(error_msg.format(num_retries, input_path, stderr))
@@ -333,10 +346,8 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
                          '-acodec', audio_codec]
     ffmpeg(ffmpeg_path, best_audio_url, audio_filepath,
            input_args=audio_input_args, output_args=audio_output_args,
-           num_retries=num_retries)
-
-    if not sanity_check_audio(audio_filepath, audio_info):
-        LOGGER.error('Audio {} is corrupted.'.format(audio_filepath))
+           num_retries=num_retries, validation_callback=validate_audio,
+           validation_args={'audio_info': audio_info})
 
     if video_mode != 'bestvideowithaudio':
         # Download the video
@@ -398,24 +409,6 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
 
     return video_filepath, audio_filepath
 
-
-def sanity_check_audio(audio_filepath, audio_info):
-    """Take audio file and sanity check basic info.
-
-        Sample output from sox:
-            {
-                'bitrate': 16,
-                'channels': 2,
-                'duration': 9.999501,
-                'encoding': 'FLAC',
-                'num_samples': 440978,
-                'sample_rate': 44100.0,
-                'silent': False
-            }
-    """
-
-    sox_info = sox.file_info.info(audio_filepath)
-    return all([v == sox_info[k] for k, v in audio_info.items()])
 
 def segment_mp_worker(ytid, ts_start, ts_end, data_dir, ffmpeg_path, **ffmpeg_cfg):
     """
