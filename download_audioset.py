@@ -360,9 +360,8 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
         'duration': duration
     }
     # Download the audio
-    audio_input_args = ['-n']
-    audio_output_args = ['-ss', str(ts_start),
-                         '-t', str(duration),
+    audio_input_args = ['-n', '-ss', str(ts_start)]
+    audio_output_args = ['-t', str(duration),
                          '-ar', str(audio_info['sample_rate']),
                          '-vn',
                          '-ac', str(audio_info['channels']),
