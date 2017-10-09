@@ -19,7 +19,7 @@ from functools import partial
 import multiprocessing_logging
 import pafy
 
-from errors import SubprocessError, FfmpegValidationError
+from errors import SubprocessError, FfmpegValidationError, FfmpegIncorrectDurationError
 from log import init_file_logger, init_console_logger
 from utils import run_command, is_url, get_filename, \
     get_subset_name, get_media_filename
@@ -212,10 +212,10 @@ def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None,
         input_args = []
     if not output_args:
         output_args = []
-    args = [ffmpeg_path] + input_args + inputs + output_args + [output_path, '-loglevel', log_level]
 
     for _ in range(num_retries):
         try:
+            args = [ffmpeg_path] + input_args + inputs + output_args + [output_path, '-loglevel', log_level]
             run_command(args)
 
             # Validate if a callback was passed in
@@ -233,13 +233,30 @@ def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None,
                 continue
             else:
                 raise e
+
+        except FfmpegIncorrectDurationError as e:
+            os.remove(output_path)
+            # If the duration of the output audio is different, alter the
+            # duration argument to account for this difference and try again
+            duration_diff = e.target_duration - e.actual_duration
+            try:
+                duration_idx = input_args.index('-t') + 1
+                input_args[duration_idx] = str(float(input_args[duration_idx]) + duration_diff)
+            except ValueError:
+                duration_idx = output_args.index('-t') + 1
+                output_args[duration_idx] = str(float(output_args[duration_idx]) + duration_diff)
+
+            LOGGER.warning(str(e) +'; Retrying...')
+            continue
+
         except FfmpegValidationError as e:
             # Retry if the output did not validate
+            os.remove(output_path)
             LOGGER.info('ffmpeg output file "{}" did not validate: {}. Retrying...'.format(output_path, e))
             continue
     else:
         error_msg = 'Maximum number of retries ({}) reached. Could not obtain inputs at {}. Error: {}'
-        LOGGER.error(error_msg.format(num_retries, input_path, stderr))
+        LOGGER.error(error_msg.format(num_retries, input_path, str(e)))
 
 
 def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
@@ -315,6 +332,11 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
     # Get the direct URLs to the videos with best audio and with best video (with audio)
 
     video = pafy.new(video_page_url)
+    video_duration = video.length
+    if ts_end > video_duration:
+        warn_msg = "End time for segment ({} - {}) of video {} extends past end of video (length {} sec)"
+        LOGGER.warning(warn_msg.format(ts_start, ts_end, ytid, video_duration))
+
     if video_mode in ('bestvideo', 'bestvideowithaudio'):
         best_video = video.getbestvideo()
         # If there isn't a video only option, go with best video with audio
@@ -336,8 +358,9 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
         'duration': duration
     }
     # Download the audio
-    audio_input_args = ['-n', '-ss', str(ts_start)]
-    audio_output_args = ['-t', str(duration),
+    audio_input_args = ['-n']
+    audio_output_args = ['-ss', str(ts_start),
+                         '-t', str(duration),
                          '-ar', str(audio_info['sample_rate']),
                          '-vn',
                          '-ac', str(audio_info['channels']),
@@ -354,7 +377,7 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
         video_input_args = ['-n', '-ss', str(ts_start)]
         video_output_args = ['-t', str(duration),
                              '-f', video_format,
-                             '-framerate', '30',
+                             '-r', '30',
                              '-vcodec', video_codec]
         # Suppress audio stream if we don't want to audio in the video
         if video_mode in ('bestvideo', 'bestvideoaudionoaudio'):
@@ -373,7 +396,7 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
                              '-f', video_format,
                              '-crf', '0',
                              '-preset', 'medium',
-                             '-framerate', '30',
+                             '-r', '30',
                              '-an',
                              '-vcodec', video_codec]
 
@@ -386,7 +409,7 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
                                + '_merge.' + video_format
         video_input_args = ['-n']
         video_output_args = ['-f', video_format,
-                             '-framerate', '30',
+                             '-r', '30',
                              '-vcodec', video_codec,
                              '-acodec', 'aac',
                              '-ar', '44100',
