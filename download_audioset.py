@@ -334,6 +334,8 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
     video = pafy.new(video_page_url)
     video_duration = video.length
     if ts_end > video_duration:
+        duration = video_duration
+        ts_end = ts_end + duration
         warn_msg = "End time for segment ({} - {}) of video {} extends past end of video (length {} sec)"
         LOGGER.warning(warn_msg.format(ts_start, ts_end, ytid, video_duration))
 
