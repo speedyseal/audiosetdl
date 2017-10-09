@@ -21,7 +21,7 @@ class FfmpegValidationError(Exception):
 
 class FfmpegIncorrectDurationError(FfmpegValidationError):
     """
-    Exception object that is raised when `ffmpeg` output does not validate.
+    Exception object that is raised when `ffmpeg` output has an expected duration
     """
     def __init__(self, filepath, target_duration, actual_duration, *args):
         self.filepath = filepath

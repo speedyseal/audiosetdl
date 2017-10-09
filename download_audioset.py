@@ -23,7 +23,7 @@ from errors import SubprocessError, FfmpegValidationError, FfmpegIncorrectDurati
 from log import init_file_logger, init_console_logger
 from utils import run_command, is_url, get_filename, \
     get_subset_name, get_media_filename
-from validation import validate_audio
+from validation import validate_audio, validate_video
 
 LOGGER = logging.getLogger('audiosetdl')
 LOGGER.setLevel(logging.DEBUG)
@@ -51,6 +51,14 @@ def parse_arguments():
                         type=str,
                         default='./bin/ffmpeg/ffmpeg',
                         help='Path to ffmpeg executable')
+
+    parser.add_argument('-fp',
+                        '--ffprobe',
+                        dest='ffprobe_path',
+                        action='store',
+                        type=str,
+                        default='./bin/ffmpeg/ffprobe',
+                        help='Path to ffprobe executable')
 
     parser.add_argument('-e',
                         '--eval',
@@ -213,6 +221,7 @@ def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None,
     if not output_args:
         output_args = []
 
+    last_err = None
     for _ in range(num_retries):
         try:
             args = [ffmpeg_path] + input_args + inputs + output_args + [output_path, '-loglevel', log_level]
@@ -224,6 +233,7 @@ def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None,
                 validation_callback(output_path, **validation_args)
             break
         except SubprocessError as e:
+            last_err = e
             stderr = e.cmd_stderr.rstrip()
             if stderr.endswith('already exists. Exiting.'):
                 LOGGER.info('ffmpeg output file "{}" already exists.'.format(output_path))
@@ -235,6 +245,7 @@ def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None,
                 raise e
 
         except FfmpegIncorrectDurationError as e:
+            last_err = e
             os.remove(output_path)
             # If the duration of the output audio is different, alter the
             # duration argument to account for this difference and try again
@@ -250,16 +261,17 @@ def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None,
             continue
 
         except FfmpegValidationError as e:
+            last_err = e
             # Retry if the output did not validate
             os.remove(output_path)
             LOGGER.info('ffmpeg output file "{}" did not validate: {}. Retrying...'.format(output_path, e))
             continue
     else:
         error_msg = 'Maximum number of retries ({}) reached. Could not obtain inputs at {}. Error: {}'
-        LOGGER.error(error_msg.format(num_retries, input_path, str(e)))
+        LOGGER.error(error_msg.format(num_retries, input_path, str(last_err)))
 
 
-def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
+def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path, ffprobe_path,
                       audio_codec='flac', audio_format='flac',
                       video_codec='h264', video_format='mp4',
                       video_mode='bestvideoaudio', num_retries=10):
@@ -273,20 +285,23 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
         <YouTube ID>_<start time in ms>_<end time in ms>.<extension>
 
     Args:
-        ytid:         Youtube ID string
-                      (Type: str)
+        ytid:          Youtube ID string
+                       (Type: str)
 
-        ts_start:     Segment start time (in seconds)
-                      (Type: float)
+        ts_start:      Segment start time (in seconds)
+                       (Type: float)
 
-        ts_start:     Segment end time (in seconds)
-                      (Type: float)
+        ts_start:      Segment end time (in seconds)
+                       (Type: float)
 
-        output_dir:   Output directory where video will be saved
-                      (Type: str)
+        output_dir:    Output directory where video will be saved
+                       (Type: str)
 
-        ffmpeg_path:  Path to ffmpeg executable
-                      (Type: str)
+        ffmpeg_path:   Path to ffmpeg executable
+                       (Type: str)
+
+        ffprobe_path:  Path to ffprobe executable
+                       (Type: str)
 
     Keyword Args:
         audio_codec:   Name of audio codec used by ffmpeg to encode
@@ -333,11 +348,13 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
 
     video = pafy.new(video_page_url)
     video_duration = video.length
+    end_past_video_end = False
     if ts_end > video_duration:
-        duration = video_duration
-        ts_end = ts_end + duration
         warn_msg = "End time for segment ({} - {}) of video {} extends past end of video (length {} sec)"
         LOGGER.warning(warn_msg.format(ts_start, ts_end, ytid, video_duration))
+        duration = video_duration - ts_start
+        ts_end = ts_start + duration
+        end_past_video_end = True
 
     if video_mode in ('bestvideo', 'bestvideowithaudio'):
         best_video = video.getbestvideo()
@@ -359,6 +376,12 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
         'encoding': audio_codec.upper(),
         'duration': duration
     }
+    video_info = {
+        "r_frame_rate": "30/1",
+        "avg_frame_rate": "30/1",
+        'codec_name': video_codec.lower(),
+        'duration': duration
+    }
     # Download the audio
     audio_input_args = ['-n', '-ss', str(ts_start)]
     audio_output_args = ['-t', str(duration),
@@ -371,7 +394,8 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
     ffmpeg(ffmpeg_path, best_audio_url, audio_filepath,
            input_args=audio_input_args, output_args=audio_output_args,
            num_retries=num_retries, validation_callback=validate_audio,
-           validation_args={'audio_info': audio_info})
+           validation_args={'audio_info': audio_info,
+                            'end_past_video_end': end_past_video_end})
 
     if video_mode != 'bestvideowithaudio':
         # Download the video
@@ -386,7 +410,10 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
 
         ffmpeg(ffmpeg_path, best_video_url, video_filepath,
                input_args=video_input_args, output_args=video_output_args,
-               num_retries=num_retries)
+               num_retries=num_retries, validation_callback=validate_video,
+               validation_args={'ffprobe_path': ffprobe_path,
+                                'video_info': video_info,
+                                'end_past_video_end': end_past_video_end})
     else:
         # Download the best quality video, in lossless encoding
         if video_codec != 'h264':
@@ -419,7 +446,10 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
 
         ffmpeg(ffmpeg_path, [video_filepath, audio_filepath], merge_video_filepath,
                input_args=video_input_args, output_args=video_output_args,
-               num_retries=num_retries)
+               num_retries=num_retries, validation_callback=validate_video,
+               validation_args={'ffprobe_path': ffprobe_path,
+                                'video_info': video_info,
+                                'end_past_video_end': end_past_video_end})
 
         # Remove the original video file and replace with the merged version
         if os.path.exists(merge_video_filepath):
@@ -434,7 +464,8 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path,
     return video_filepath, audio_filepath
 
 
-def segment_mp_worker(ytid, ts_start, ts_end, data_dir, ffmpeg_path, **ffmpeg_cfg):
+def segment_mp_worker(ytid, ts_start, ts_end, data_dir, ffmpeg_path,
+                      ffprobe_path, **ffmpeg_cfg):
     """
     Pool worker that downloads video segments.o
 
@@ -442,20 +473,23 @@ def segment_mp_worker(ytid, ts_start, ts_end, data_dir, ffmpeg_path, **ffmpeg_cf
 
     Args:
 
-        ytid:         Youtube ID string
-                      (Type: str)
+        ytid:          Youtube ID string
+                       (Type: str)
 
-        ts_start:     Segment start time (in seconds)
-                      (Type: float)
+        ts_start:      Segment start time (in seconds)
+                       (Type: float)
 
-        ts_end:       Segment end time (in seconds)
-                      (Type: float)
+        ts_end:        Segment end time (in seconds)
+                       (Type: float)
 
-        data_dir:     Directory where videos will be saved
-                      (Type: str)
+        data_dir:      Directory where videos will be saved
+                       (Type: str)
 
-        ffmpeg_path:  Path to ffmpeg executable
-                      (Type: str)
+        ffmpeg_path:   Path to ffmpeg executable
+                       (Type: str)
+
+        ffprobe_path:  Path to ffprobe executable
+                       (Type: str)
 
     Keyword Args:
         **ffmpeg_cfg:  Configuration for audio and video
@@ -466,7 +500,8 @@ def segment_mp_worker(ytid, ts_start, ts_end, data_dir, ffmpeg_path, **ffmpeg_cf
 
     # Download the video
     try:
-        download_yt_video(ytid, ts_start, ts_end, data_dir, ffmpeg_path, **ffmpeg_cfg)
+        download_yt_video(ytid, ts_start, ts_end, data_dir, ffmpeg_path,
+                          ffprobe_path, **ffmpeg_cfg)
     except SubprocessError as e:
         err_msg = 'Error while downloading video {}: {}; {}'.format(ytid, e, tb.format_exc())
         LOGGER.error(err_msg)
@@ -533,7 +568,8 @@ def download_subset_file(subset_url, dataset_dir):
     return subset_path
 
 
-def download_subset_videos(subset_path, data_dir, ffmpeg_path, num_workers, **ffmpeg_cfg):
+def download_subset_videos(subset_path, data_dir, ffmpeg_path, ffprobe_path,
+                           num_workers, **ffmpeg_cfg):
     """
     Download subset segment file and videos
 
@@ -545,6 +581,9 @@ def download_subset_videos(subset_path, data_dir, ffmpeg_path, num_workers, **ff
                        (Type: str)
 
         ffmpeg_path:   Path to ffmpeg executable
+                       (Type: str)
+
+        ffprobe_path:  Path to ffprobe executable
                        (Type: str)
 
         num_workers:   Number of multiprocessing workers used to download videos
@@ -579,7 +618,7 @@ def download_subset_videos(subset_path, data_dir, ffmpeg_path, num_workers, **ff
                     LOGGER.info(info_msg.format(ytid, ts_start, ts_end))
                     continue
 
-                worker_args = [ytid, ts_start, ts_end, data_dir, ffmpeg_path]
+                worker_args = [ytid, ts_start, ts_end, data_dir, ffmpeg_path, ffprobe_path]
                 pool.apply_async(partial(segment_mp_worker, **ffmpeg_cfg), worker_args)
                 # Run serially
                 #segment_mp_worker(*worker_args, **ffmpeg_cfg)
@@ -602,8 +641,8 @@ def download_subset_videos(subset_path, data_dir, ffmpeg_path, num_workers, **ff
     LOGGER.info('Finished download jobs for subset "{}"'.format(subset_name))
 
 
-def download_random_subset_files(subset_url, dataset_dir, ffmpeg_path, num_workers,
-                                 max_videos=None,  **ffmpeg_cfg):
+def download_random_subset_files(subset_url, dataset_dir, ffmpeg_path, ffprobe_path,
+                                 num_workers, max_videos=None,  **ffmpeg_cfg):
     """
     Download a a random subset (of size `max_videos`) of subset segment file and videos
 
@@ -615,6 +654,9 @@ def download_random_subset_files(subset_url, dataset_dir, ffmpeg_path, num_worke
                        (Type: str)
 
         ffmpeg_path:   Path to ffmpeg executable
+                       (Type: str)
+
+        ffprobe_path:  Path to ffprobe executable
                        (Type: str)
 
         num_workers:   Number of multiprocessing workers used to download videos
@@ -629,6 +671,7 @@ def download_random_subset_files(subset_url, dataset_dir, ffmpeg_path, num_worke
                        downloading and decoding done by ffmpeg
                        (Type: dict[str, *])
     """
+    # FIXME: This code is outdated and shouldn't be used
     # Validate max_videos
     if max_videos is not None and (max_videos < 1 or type(max_videos) != int):
         err_msg = 'max_videos must be a positive integer, or None'
@@ -671,7 +714,7 @@ def download_random_subset_files(subset_url, dataset_dir, ffmpeg_path, num_worke
     pool = mp.Pool(num_workers)
     try:
         for idx, row in enumerate(subset_data):
-            worker_args = [row[0], float(row[1]), float(row[2]), data_dir, ffmpeg_path]
+            worker_args = [row[0], float(row[1]), float(row[2]), data_dir, ffmpeg_path, ffprobe_path]
             pool.apply_async(partial(segment_mp_worker, **ffmpeg_cfg), worker_args)
             # Run serially
             #segment_mp_worker(*worker_args, **ffmpeg_cfg)
@@ -695,22 +738,26 @@ def download_random_subset_files(subset_url, dataset_dir, ffmpeg_path, num_worke
     LOGGER.info('Finished download jobs for subset "{}"'.format(subset_name))
 
 
-def download_subset(subset_path, dataset_dir, ffmpeg_path, num_workers, **ffmpeg_cfg):
+def download_subset(subset_path, dataset_dir, ffmpeg_path, ffprobe_path,
+                    num_workers, **ffmpeg_cfg):
     """
     Download all files for a subset, including the segment file, and the audio and video files.
 
     Args:
-        subset_path:   Path to subset segments file
-                       (Type: str)
+        subset_path:    Path to subset segments file
+                        (Type: str)
 
-        dataset_dir:   Path to dataset directory where files are saved
-                       (Type: str)
+        dataset_dir:    Path to dataset directory where files are saved
+                        (Type: str)
 
-        ffmpeg_path:   Path to ffmpeg executable
-                       (Type: str)
+        ffmpeg_path:    Path to ffmpeg executable
+                        (Type: str)
 
-        num_workers:   Number of workers to download and process videos
-                       (Type: int)
+        ffprobe_path:   Path to ffprobe executable
+                        (Type: str)
+
+        num_workers:    Number of workers to download and process videos
+                        (Type: int)
 
     Keyword Args:
         **ffmpeg_cfg:                   Configuration for audio and video
@@ -726,10 +773,11 @@ def download_subset(subset_path, dataset_dir, ffmpeg_path, num_workers, **ffmpeg
     subset_name = get_subset_name(subset_path)
     data_dir = init_subset_data_dir(dataset_dir, subset_name)
 
-    download_subset_videos(subset_path, data_dir, ffmpeg_path, num_workers, **ffmpeg_cfg)
+    download_subset_videos(subset_path, data_dir, ffmpeg_path, ffprobe_path,
+                           num_workers, **ffmpeg_cfg)
 
 
-def download_audioset(data_dir, ffmpeg_path, eval_segments_path,
+def download_audioset(data_dir, ffmpeg_path, ffprobe_path, eval_segments_path,
                       balanced_train_segments_path, unbalanced_train_segments_path,
                       disable_logging=False, verbose=False, num_workers=4,
                       log_path=None, **ffmpeg_cfg):
@@ -742,6 +790,9 @@ def download_audioset(data_dir, ffmpeg_path, eval_segments_path,
                                         (Type: str)
 
         ffmpeg_path:                    Path to ffmpeg executable
+                                        (Type: str)
+
+        ffprobe_path:                   Path to ffprobe executable
                                         (Type: str)
 
         eval_segments_path:             Path to evaluation segments file
@@ -780,9 +831,12 @@ def download_audioset(data_dir, ffmpeg_path, eval_segments_path,
     LOGGER.debug('Initialized logging.')
 
 
-    download_subset(eval_segments_path, data_dir, ffmpeg_path, num_workers, **ffmpeg_cfg)
-    download_subset(balanced_train_segments_path, data_dir, ffmpeg_path, num_workers, **ffmpeg_cfg)
-    download_subset(unbalanced_train_segments_path, data_dir, ffmpeg_path, num_workers, **ffmpeg_cfg)
+    download_subset(eval_segments_path, data_dir, ffmpeg_path, ffprobe_path,
+                    num_workers, **ffmpeg_cfg)
+    download_subset(balanced_train_segments_path, data_dir, ffmpeg_path, ffprobe_path,
+                    num_workers, **ffmpeg_cfg)
+    download_subset(unbalanced_train_segments_path, data_dir, ffmpeg_path, ffprobe_path,
+                    num_workers, **ffmpeg_cfg)
 
 
 if __name__ == '__main__':
