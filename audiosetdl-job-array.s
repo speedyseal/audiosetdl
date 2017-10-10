@@ -3,7 +3,7 @@
 #SBATCH --job-name=audioset-dl-array
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=30GB
+#SBATCH --mem=4GB
 #SBATCH --time=72:00:00
 #SBATCH --mail-type=ALL
 ##SBATCH --mail-user=joe.schmoe@real.email
@@ -16,13 +16,14 @@ DATADIR=$SRCDIR/audioset
 mkdir -p $DATADIR
 
 module purge
-module load sox/intel/14.4.2
+
+source $SRCDIR/bin/miniconda/bin/activate
 
 EVAL_PATH="$DATADIR/eval_segments.csv.$(printf '%02d' $SLURM_ARRAY_TASK_ID)";
 BALANCED_TRAIN_PATH="$DATADIR/balanced_train_segments.csv.$(printf '%02d' $SLURM_ARRAY_TASK_ID)";
 UNBALANCED_TRAIN_PATH="$DATADIR/unbalanced_train_segments.csv.$(printf '%02d' $SLURM_ARRAY_TASK_ID)";
 
-$HOME/audiosetdl/bin/miniconda/bin/python $SRCDIR/download_audioset.py \
+python $SRCDIR/download_audioset.py \
     -f $FFMPEG_PATH \
     --eval $EVAL_PATH \
     --balanced-train $BALANCED_TRAIN_PATH \

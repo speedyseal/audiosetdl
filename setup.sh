@@ -17,4 +17,6 @@ tar xf ffmpeg-release-64bit-static.tar.xz
 mv ffmpeg-3.3.4-64bit-static $BIN_DIR/ffmpeg
 
 # Install conda dependencies
+$CONDA_BIN_DIR/conda install -c conda-forge -y sox
+$CONDA_BIN_DIR/conda install -c yaafe -y libflac
 $CONDA_BIN_DIR/pip install --upgrade -r ./requirements.txt
