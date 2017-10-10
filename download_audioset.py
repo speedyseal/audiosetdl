@@ -22,7 +22,7 @@ import pafy
 from errors import SubprocessError, FfmpegValidationError, FfmpegIncorrectDurationError
 from log import init_file_logger, init_console_logger
 from utils import run_command, is_url, get_filename, \
-    get_subset_name, get_media_filename
+    get_subset_name, get_media_filename, HTTP_ERR_PATTERN
 from validation import validate_audio, validate_video
 
 LOGGER = logging.getLogger('audiosetdl')
@@ -238,8 +238,8 @@ def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None,
             if stderr.endswith('already exists. Exiting.'):
                 LOGGER.info('ffmpeg output file "{}" already exists.'.format(output_path))
                 break
-            elif stderr.endswith('Server returned 404 Not Found'):
-                # Retry if we got a 404, in case it was just a network issue
+            elif HTTP_ERR_PATTERN.match(stderr):
+                # Retry if we got a 4XX or 5XX, in case it was just a network issue
                 continue
             else:
                 raise e

@@ -5,6 +5,7 @@ import subprocess as sp
 from errors import SubprocessError
 
 URL_PATTERN = re.compile(r'https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#?&//=]*)')
+HTTP_ERR_PATTERN = re.compile(r'Server returned (4|5)(X|[0-9])(X|[0-9])')
 
 
 def run_command(cmd, **kwargs):
