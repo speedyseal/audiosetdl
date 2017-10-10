@@ -71,3 +71,12 @@ This can be run as a batch of SLURM jobs
   
 ## Examples
 Examples can be found in the `notebooks` directory of this repository.
+
+
+## Cases where videos cannot be downloaded
+* Video removed
+* User account deleted
+* Not available in country
+* Need to sign in to view
+* Video no longer exists
+* Copyright takedown
