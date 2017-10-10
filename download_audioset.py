@@ -222,7 +222,7 @@ def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None,
         output_args = []
 
     last_err = None
-    for _ in range(num_retries):
+    for attempt in range(num_retries):
         try:
             args = [ffmpeg_path] + input_args + inputs + output_args + [output_path, '-loglevel', log_level]
             run_command(args)
@@ -246,7 +246,8 @@ def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None,
 
         except FfmpegIncorrectDurationError as e:
             last_err = e
-            os.remove(output_path)
+            if attempt < num_retries - 1:
+                os.remove(output_path)
             # If the duration of the output audio is different, alter the
             # duration argument to account for this difference and try again
             duration_diff = e.target_duration - e.actual_duration
@@ -262,8 +263,9 @@ def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None,
 
         except FfmpegValidationError as e:
             last_err = e
+            if attempt < num_retries - 1:
+                os.remove(output_path)
             # Retry if the output did not validate
-            os.remove(output_path)
             LOGGER.info('ffmpeg output file "{}" did not validate: {}. Retrying...'.format(output_path, e))
             continue
     else:
