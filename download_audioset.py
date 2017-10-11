@@ -241,12 +241,14 @@ def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None,
             elif HTTP_ERR_PATTERN.match(stderr):
                 # Retry if we got a 4XX or 5XX, in case it was just a network issue
                 continue
-            else:
-                raise e
+
+            LOGGER.error(str(e) + '. Retrying...')
+            if os.path.exists(output_path):
+                os.remove(output_path)
 
         except FfmpegIncorrectDurationError as e:
             last_err = e
-            if attempt < num_retries - 1:
+            if attempt < num_retries - 1 and os.path.exists(output_path):
                 os.remove(output_path)
             # If the duration of the output audio is different, alter the
             # duration argument to account for this difference and try again
@@ -263,7 +265,7 @@ def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None,
 
         except FfmpegValidationError as e:
             last_err = e
-            if attempt < num_retries - 1:
+            if attempt < num_retries - 1 and os.path.exists(output_path):
                 os.remove(output_path)
             # Retry if the output did not validate
             LOGGER.info('ffmpeg output file "{}" did not validate: {}. Retrying...'.format(output_path, e))

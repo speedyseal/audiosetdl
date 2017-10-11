@@ -97,6 +97,9 @@ def validate_video(video_filepath, ffprobe_path, video_info, end_past_video_end=
         raise FfmpegValidationError(error_msg.format(video_filepath))
 
     # Get the video stream data
+    if not ffprobe_info.get('streams'):
+        error_msg = '{} has no video streams!'
+        raise FfmpegValidationError(error_msg.format(video_filepath))
     ffprobe_info = next(stream for stream in ffprobe_info['streams'] if stream['codec_type'] == 'video')
 
     # If duration specifically doesn't match, catch that separately so we can

@@ -5,7 +5,11 @@ class SubprocessError(Exception):
     """
     def __init__(self, cmd, return_code, stdout, stderr, *args):
         msg = 'Got non-zero exit code ({1}) from command "{0}": {2}'
-        msg = msg.format(cmd[0], return_code, stderr)
+        if stderr.strip():
+            err_msg = stderr
+        else:
+            err_msg = stdout
+        msg = msg.format(cmd[0], return_code, err_msg)
         self.cmd = cmd
         self.cmd_return_code = return_code
         self.cmd_stdout = stdout
