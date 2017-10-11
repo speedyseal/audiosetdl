@@ -92,6 +92,22 @@ def parse_arguments():
                         default='flac',
                         help='Name of audio codec used by ffmpeg to encode output audio')
 
+    parser.add_argument('-asr',
+                        '--audio-sample-rate',
+                        dest='audio_sample_rate',
+                        action='store',
+                        type=int,
+                        default=48000,
+                        help='Target audio sample rate (in Hz)')
+
+    parser.add_argument('-abd',
+                        '--audio-bit-depth',
+                        dest='audio_bit_depth',
+                        action='store',
+                        type=int,
+                        default=16,
+                        help='Target audio sample bit depth')
+
     parser.add_argument('-vc',
                         '--video-codec',
                         dest='video_codec',
@@ -129,6 +145,15 @@ def parse_arguments():
                              "audio stream. 'bestvideowithaudio' obtains the " \
                              "best quality video without an audio stream and " \
                              " merges it with audio stream")
+
+    parser.add_argument('-vfr',
+                        '--video-frame-rate',
+                        dest='video_frame_rate',
+                        action='store',
+                        type=int,
+                        default=30,
+                        help='Target video frame rate (in fps)')
+
     parser.add_argument('-nr',
                         '--num-retries',
                         dest='num_retries',
@@ -277,8 +302,10 @@ def ffmpeg(ffmpeg_path, input_path, output_path, input_args=None,
 
 def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path, ffprobe_path,
                       audio_codec='flac', audio_format='flac',
+                      audio_sample_rate=48000, audio_bit_depth=16,
                       video_codec='h264', video_format='mp4',
-                      video_mode='bestvideoaudio', num_retries=10):
+                      video_mode='bestvideoaudio', video_frame_rate=30,
+                      num_retries=10):
     """
     Download a Youtube video (with the audio and video separated).
 
@@ -308,27 +335,41 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path, ffprobe_p
                        (Type: str)
 
     Keyword Args:
-        audio_codec:   Name of audio codec used by ffmpeg to encode
-                       output audio
-                       (Type: str)
+        audio_codec:        Name of audio codec used by ffmpeg to encode
+                            output audio
+                            (Type: str)
 
-        audio_format:  Name of audio container format used for output audio
-                       (Type: str)
+        audio_format:       Name of audio container format used for output audio
+                            (Type: str)
 
-        video_codec:   Name of video codec used by ffmpeg to encode
-                       output video
-                       (Type: str)
+        audio_sample_rate:  Target audio sample rate (in Hz)
+                            (Type: int)
 
-        video_format:  Name of video container format used for output video
-                       (Type: str)
+        audio_bit_depth:    Target audio sample bit depth
+                            (Type: int)
 
-        video_mode:    Name of the method in which video is downloaded.
-                       'bestvideo' obtains the best quality video that does not
-                       contain an audio stream. 'bestvideoaudio' obtains the
-                       best quality video that contains an audio stream.
-                       'bestvideowithaudio' obtains the best quality video
-                       without an audio stream and merges it with audio stream.
-                       (Type: bool)
+        video_codec:        Name of video codec used by ffmpeg to encode
+                            output video
+                            (Type: str)
+
+        video_format:       Name of video container format used for output video
+                            (Type: str)
+
+        video_mode:         Name of the method in which video is downloaded.
+                            'bestvideo' obtains the best quality video that does not
+                            contain an audio stream. 'bestvideoaudio' obtains the
+                            best quality video that contains an audio stream.
+                            'bestvideowithaudio' obtains the best quality video
+                            without an audio stream and merges it with audio stream.
+                            (Type: bool)
+
+        video_frame_rate:   Target video frame rate (in fps)
+                            (Type: int)
+
+        num_retries:        Number of attempts to download and process an audio
+                            or video file with ffmpeg
+                            (Type: int)
+
 
     Returns:
         video_filepath:  Filepath to video file
@@ -374,25 +415,25 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path, ffprobe_p
     best_audio_url = best_audio.url
 
     audio_info = {
-        'sample_rate': 44100,
+        'sample_rate': audio_sample_rate,
         'channels': 2,
-        'bitrate': 16,
+        'bitrate': audio_bit_depth,
         'encoding': audio_codec.upper(),
         'duration': duration
     }
     video_info = {
-        "r_frame_rate": "30/1",
-        "avg_frame_rate": "30/1",
+        "r_frame_rate": "{}/1".format(video_frame_rate),
+        "avg_frame_rate": "{}/1".format(video_frame_rate),
         'codec_name': video_codec.lower(),
         'duration': duration
     }
     # Download the audio
     audio_input_args = ['-n', '-ss', str(ts_start)]
     audio_output_args = ['-t', str(duration),
-                         '-ar', str(audio_info['sample_rate']),
+                         '-ar', str(audio_sample_rate),
                          '-vn',
                          '-ac', str(audio_info['channels']),
-                         '-sample_fmt', 's{}'.format(audio_info['bitrate']),
+                         '-sample_fmt', 's{}'.format(audio_bit_depth),
                          '-f', audio_format,
                          '-acodec', audio_codec]
     ffmpeg(ffmpeg_path, best_audio_url, audio_filepath,
@@ -406,7 +447,7 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path, ffprobe_p
         video_input_args = ['-n', '-ss', str(ts_start)]
         video_output_args = ['-t', str(duration),
                              '-f', video_format,
-                             '-r', '30',
+                             '-r', str(video_frame_rate),
                              '-vcodec', video_codec]
         # Suppress audio stream if we don't want to audio in the video
         if video_mode in ('bestvideo', 'bestvideoaudionoaudio'):
@@ -428,7 +469,7 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path, ffprobe_p
                              '-f', video_format,
                              '-crf', '0',
                              '-preset', 'medium',
-                             '-r', '30',
+                             '-r', str(video_frame_rate),
                              '-an',
                              '-vcodec', video_codec]
 
@@ -441,11 +482,11 @@ def download_yt_video(ytid, ts_start, ts_end, output_dir, ffmpeg_path, ffprobe_p
                                + '_merge.' + video_format
         video_input_args = ['-n']
         video_output_args = ['-f', video_format,
-                             '-r', '30',
+                             '-r', str(video_frame_rate),
                              '-vcodec', video_codec,
                              '-acodec', 'aac',
-                             '-ar', '44100',
-                             '-ac', '2',
+                             '-ar', str(audio_sample_rate),
+                             '-ac', str(audio_info['channels']),
                              '-strict', 'experimental']
 
         ffmpeg(ffmpeg_path, [video_filepath, audio_filepath], merge_video_filepath,
