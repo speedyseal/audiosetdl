@@ -2,9 +2,9 @@
 
 #SBATCH --job-name=audioset-dl-array
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=4GB
-#SBATCH --time=72:00:00
+#SBATCH --time=7-00:00:00
 #SBATCH --mail-type=ALL
 ##SBATCH --mail-user=joe.schmoe@real.email
 #SBATCH --output="audioset-dl-%A-%a.out"
@@ -33,6 +33,7 @@ python $SRCDIR/download_audioset.py \
     --audio-format flac \
     --video-format mp4 \
     --video-mode bestvideoaudio \
+    --num-workers 8 \
     --num-retries 10 \
     --no-logging \
     --verbose \
