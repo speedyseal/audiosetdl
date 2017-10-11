@@ -3,8 +3,8 @@
 #SBATCH --job-name=audioset-dl-array
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=4GB
-#SBATCH --time=7-00:00:00
+#SBATCH --mem=12GB
+#SBATCH --time=7-0
 #SBATCH --mail-type=ALL
 ##SBATCH --mail-user=joe.schmoe@real.email
 #SBATCH --output="audioset-dl-%A-%a.out"
@@ -29,9 +29,12 @@ python $SRCDIR/download_audioset.py \
     --balanced-train $BALANCED_TRAIN_PATH \
     --unbalanced-train $UNBALANCED_TRAIN_PATH \
     --audio-codec flac \
-    --video-codec h264 \
     --audio-format flac \
+    --audio-sample-rate 48000 \
+    --audio-bit-depth 16 \
+    --video-codec h264 \
     --video-format mp4 \
+    --video-frame-rate 30 \
     --video-mode bestvideoaudio \
     --num-workers 8 \
     --num-retries 10 \
