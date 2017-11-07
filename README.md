@@ -80,3 +80,29 @@ Examples can be found in the `notebooks` directory of this repository.
 * Need to sign in to view
 * Video no longer exists
 * Copyright takedown
+
+## Notes by David
+Easiest way to do this is install sox via brew.
+* Download ffmpeg and ffprobe https://ffmpeg.org/download.html#build-mac
+* Change filenames in setup.sh to be MacOSX instead of Linux.
+* comment out lines that download ffmpeg
+* Copy ffmpeg and ffprobe binaries into <PROJECT_DIR>/bin/ffmpeg/
+
+#
+### Install homebrew 
+ /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
+
+### Install wget and audiosetdl
+ brew install wget
+
+ ./setup.sh
+
+### Install sox
+ brew install sox --with-flac --with-lame --with-libao --with-libsndfile --with-libvorbis --with-opencore-amr --with-opusfile
+
+* move old sox out of the way and symlink brew's sox to miniconda's bin
+ ln -s /usr/local/bin/sox <PROJECT_DIR>/bin/miniconda/bin/
+
+ utils.run_comand() needs to open POPEN with universal_newlines=True to enable string format otherwise json module will fail.
+
+Youtube is mostly AAC format so it's not necessary to store in any higher quality format, but sox doesn't support AAC. Easiest compressed format to use with sox is flac. Maybe ogg or mp3 will work also.

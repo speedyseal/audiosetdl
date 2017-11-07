@@ -5,6 +5,12 @@ import sox
 from errors import FfmpegValidationError, FfmpegIncorrectDurationError
 from utils import run_command
 
+import logging
+import logging.handlers
+LOGGER = logging.getLogger('audiosetdl')
+LOGGER.setLevel(logging.DEBUG)
+
+TOL = 0.7   # allow 0.7s variation in length
 
 def ffprobe(ffprobe_path, filepath):
     """
@@ -64,14 +70,27 @@ def validate_audio(audio_filepath, audio_info, end_past_video_end=False):
     target_duration = audio_info['duration']
     actual_duration = sox_info['num_samples'] / audio_info['sample_rate']
     if target_duration != actual_duration:
-        if not(end_past_video_end and actual_duration < target_duration):
+        #if not(end_past_video_end and actual_duration < target_duration):
+        if actual_duration < (target_duration - TOL) or actual_duration > (target_duration+TOL):
             raise FfmpegIncorrectDurationError(audio_filepath, target_duration,
                                                actual_duration)
     for k, v in audio_info.items():
-        if k == 'duration' and (end_past_video_end and actual_duration < target_duration):
+        if k == 'duration': #and (end_past_video_end and actual_duration < target_duration):
             continue
 
         output_v = sox_info[k]
+
+        try:
+            v = float(v)
+        except ValueError:
+            #LOGGER.warning("Could not convert audio info value {} for key {}".format(v, k))
+            pass
+        try:
+            output_v = float(output_v)
+        except ValueError:
+            #LOGGER.warning("Could not convert sox info value {} for key {}".format(output_v, k))
+            pass
+
         if v != output_v:
             error_msg = 'Output audio {} should have {} = {}, but got {}.'.format(audio_filepath, k, v, output_v)
             raise FfmpegValidationError(error_msg)
@@ -115,12 +134,13 @@ def validate_video(video_filepath, ffprobe_path, video_info, end_past_video_end=
         raise FfmpegValidationError(error_msg.format(video_filepath))
     actual_duration = float(ffprobe_info['nb_frames']) / actual_framerate
     if target_duration != actual_duration:
-        if not(end_past_video_end and actual_duration < target_duration):
+        #if not(end_past_video_end and actual_duration < (target_duration-TOL)):
+        if actual_duration < (target_duration - TOL) or actual_duration > (target_duration+TOL):
             raise FfmpegIncorrectDurationError(video_filepath, target_duration,
                                                actual_duration)
 
     for k, v in video_info.items():
-        if k == 'duration' and (end_past_video_end and actual_duration < target_duration):
+        if k == 'duration': # and (end_past_video_end and actual_duration < target_duration):
             continue
 
         output_v = ffprobe_info[k]
@@ -129,12 +149,15 @@ def validate_video(video_filepath, ffprobe_path, video_info, end_past_video_end=
         try:
             v = float(v)
         except ValueError:
+            #LOGGER.warning("Could not convert video info value {} for key {}".format(v, k))
             pass
         try:
             output_v = float(output_v)
         except ValueError:
+            #LOGGER.warning("Could not convert ffprobe value {} for key {}".format(output_v, k))
             pass
 
+        # if duration, and within tolerance, then short circuit the v!=output_v test
         if v != output_v:
             error_msg = 'Output video {} should have {} = {}, but got {}.'.format(video_filepath, k, v, output_v)
             raise FfmpegValidationError(error_msg)

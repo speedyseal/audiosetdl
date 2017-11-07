@@ -28,13 +28,13 @@ def run_command(cmd, **kwargs):
         return_code:  Exit/return code from running command
                       (Type: int)
     """
-    proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, **kwargs)
+    proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, universal_newlines=True, **kwargs)
     stdout, stderr = proc.communicate()
 
     return_code = proc.returncode
 
     if return_code != 0:
-        raise SubprocessError(cmd, return_code, stdout.decode(), stderr.decode())
+        raise SubprocessError(cmd, return_code, stdout, stderr)
 
     return stdout, stderr, return_code
 
